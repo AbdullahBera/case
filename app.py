@@ -71,13 +71,14 @@ def main():
     create_card(col2, "Bar Chart", "📊", display_bar_chart, df, "Category", "Value", "Category Value Distribution")
     create_card(col3, "Growth Rate Analysis", "📈", display_growth_analysis, df, "Category", "Growth")
     create_card(col4, "Filter Data", "🔍", display_data_filter, df, "Value", 0, 100, 50)
+    create_card(col5, "Line Chart", "📉", display_line_chart, df, "Category", "Value", "Value Trend")
+
     
     # Example of how to add more cards with different visualizations
     # Uncomment or add your own as needed
     col6, col7 = st.columns(2)
-    create_card(col6, "Line Chart", "📉", display_line_chart, df, "Category", "Value", "Value Trend")
-    create_card(col7, "Scatter Plot", "🔵", display_scatter_plot, df, "Value", "Growth", "Category", "Value vs Growth")
-    create_card(col5, "Download Data", "💾", display_download_option, df)
+    create_card(col6, "Scatter Plot", "🔵", display_scatter_plot, df, "Value", "Growth", "Category", "Value vs Growth")
+    create_card(col7, "Download Data", "💾", display_download_option, df)
 
 
 if __name__ == "__main__":
