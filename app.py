@@ -75,9 +75,9 @@ def main():
     
     # Example of how to add more cards with different visualizations
     # Uncomment or add your own as needed
-    # col6, col7 = st.columns(2)
-    # create_card(col6, "Line Chart", "📉", display_line_chart, df, "Category", "Value", "Value Trend")
-    # create_card(col7, "Scatter Plot", "🔵", display_scatter_plot, df, "Value", "Growth", "Category", "Value vs Growth")
+    col6, col7 = st.columns(2)
+    create_card(col6, "Line Chart", "📉", display_line_chart, df, "Category", "Value", "Value Trend")
+    create_card(col7, "Scatter Plot", "🔵", display_scatter_plot, df, "Value", "Growth", "Category", "Value vs Growth")
 
 if __name__ == "__main__":
     main()
