@@ -1,60 +1,17 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import numpy as np
 from typing import List, Dict, Any, Callable, Optional, Union
 
-# --- STYLING ---
-def setup_page_style():
-    """Set up the page styling with custom CSS"""
-    st.markdown("""
-    <style>
-        div.card {
-            background-color: #f0f2f6;
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 15px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        h3 {
-            color: #262730;
-            margin-bottom: 10px;
-        }
-        .card-title {
-            font-weight: bold;
-            margin-bottom: 12px;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- DATA HANDLING ---
-def load_sample_data() -> pd.DataFrame:
-    """Load sample data - replace with your own data loading function"""
-    return pd.DataFrame({
-        "Category": ["A", "B", "C", "D", "E"],
-        "Value": np.random.randint(10, 100, 5),
-        "Growth": np.random.uniform(1.1, 2.0, 5),
-    })
-
-def load_data() -> pd.DataFrame:
-    """Load the dataset - customize this function for your own data sources"""
-    # Replace this with your actual data loading logic
-    return load_sample_data()
-
-# --- CARD COMPONENTS ---
-def create_card(container, title: str, icon: str, content_function: Callable, *args, **kwargs):
-    """Create a card with a title and content"""
-    with container:
-        st.markdown(f"<h3>{icon} {title}</h3>", unsafe_allow_html=True)
-        with st.container():
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            content_function(*args, **kwargs)
-            st.markdown('</div>', unsafe_allow_html=True)
+# Import from project files
+from data_analysis import load_data, get_summary_stats, filter_data, analyze_growth
+from utils import setup_page_style, create_card
 
 # --- CARD CONTENT FUNCTIONS ---
 def display_summary_stats(df: pd.DataFrame):
     """Display summary statistics"""
-    st.write(df.describe())
+    stats = get_summary_stats(df)
+    st.write(stats)
 
 def display_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, title: str):
     """Display a bar chart"""
@@ -69,13 +26,13 @@ def display_line_chart(df: pd.DataFrame, x_col: str, y_col: str, title: str):
 def display_growth_analysis(df: pd.DataFrame, category_col: str, growth_col: str):
     """Display growth rate analysis with a dropdown selection"""
     category = st.selectbox("Select a Category", df[category_col])
-    growth = df[df[category_col] == category][growth_col].values[0]
+    growth = analyze_growth(df, category_col, growth_col, category)
     st.metric(label=f"Growth Rate of {category}", value=f"{growth:.2f}x")
 
 def display_data_filter(df: pd.DataFrame, filter_col: str, min_val: int, max_val: int, default: int):
     """Display data filtering controls"""
     threshold = st.slider(f"Filter {filter_col} greater than:", min_val, max_val, default)
-    filtered_df = df[df[filter_col] > threshold]
+    filtered_df = filter_data(df, filter_col, threshold)
     st.dataframe(filtered_df)
 
 def display_download_option(df: pd.DataFrame, filename: str = "data.csv"):
