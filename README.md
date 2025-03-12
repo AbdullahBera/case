@@ -156,12 +156,3 @@ streamlit run app.py
 
 
 
-
-
-
-
-
-
-
-- **Strategic Planning**: Hotels can adjust **pricing, marketing efforts, and staffing** based on expected demand.
-- **Revenue Optimization**: By predicting demand, hotels can maximize revenue through **dynamic pricing and inventory management**.
