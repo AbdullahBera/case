@@ -145,10 +145,12 @@ streamlit run app.py
 ✅ **psycopg2** (PostgreSQL connection)  
 
 
+
+
 ## 📩 Contact
 
 📧 **Email:** [abdullahberakucuk@gmail.com](mailto:abdullahberakucuk@gmail.com)  
-🔗 **LinkedIn:** [Your Profile](#AbdullahBera)
+🔗 **LinkedIn:** [Abdullah Bera Kucuk](https://www.linkedin.com/in/abdullahberakucuk/)
 
 
 
