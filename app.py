@@ -285,6 +285,9 @@ with tab1:
     else:
         st.write("No revenue data available for the selected filters.")
 
+
+### Time Series Forecasting
+
 with tab2:
     st.header("📈 Booking Forecast")
     
