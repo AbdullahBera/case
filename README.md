@@ -34,6 +34,8 @@ This project provides an **end-to-end data pipeline** and **interactive dashboar
   ```bash
   python etl.py
   ```
+![ERD Diagram](images/erd_diagram.png)
+
 ### 🔍 What Happens When You Run the ETL Pipeline?
 
 1. **Load Data**: Reads `hotel_bookings.csv` into a Pandas DataFrame.
