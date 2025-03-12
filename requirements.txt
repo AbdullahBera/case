@@ -1,4 +1,7 @@
-pandas
-numpy
 streamlit
+pandas
+psycopg2-binary
 plotly
+python-dotenv
+numpy
+prophet
