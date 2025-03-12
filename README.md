@@ -21,7 +21,7 @@ This project provides an **end-to-end data pipeline** and **interactive dashboar
         │── requirements.txt # Project dependencies
         │── README.md 
         │── images/ # Images
-        │── notebook.ipynb # Jupyter Notebook
+        │── notebook.ipynb # Jupyter Notebook (pre analysis)
   ```
 
 # 🏗️ Data Engineering
