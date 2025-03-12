@@ -12,13 +12,18 @@ This project provides an **end-to-end data pipeline** and **interactive dashboar
 
 ## **📂 Project Structure**
 
-📁 case │── .env # PostgreSQL credentials (ignored in Git) 
+📁 case 
+  ```bash
+        │── .env # PostgreSQL credentials (Didn't ignore in gitignore)
         │── etl.py # Cleans & loads data into PostgreSQL 
         │── app.py # Streamlit dashboard (trends, cancellations, revenue, forecasting) 
         │── utils.py # Utility functions
         │── requirements.txt # Project dependencies
         │── README.md 
-                            
+        │── images/ # Images
+        │── notebook.ipynb # Jupyter Notebook
+  ```
+
 # 🏗️ Data Engineering
 
 ## 📂 ETL Pipeline
