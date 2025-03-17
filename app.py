@@ -320,22 +320,32 @@ with tab2:
     # Rename for Prophet
     df_prophet = df_forecast_data[["ds", "total_bookings"]].rename(columns={"total_bookings": "y"})
     
+    # Split data: training (until end of 2016), testing (2017 onwards)
+    cutoff_date = pd.Timestamp('2016-12-31')
+    df_train = df_prophet[df_prophet['ds'] <= cutoff_date]
+    df_test = df_prophet[df_prophet['ds'] > cutoff_date]
+    
     # Set fixed forecast period to 12 months
     forecast_periods = 12
+    
+    # Calculate the last date in the dataset to determine future forecast start
+    last_date_in_data = df_prophet['ds'].max()
     
     # Train Prophet Model
     with st.spinner("Training forecasting model..."):
         model = Prophet(yearly_seasonality=True, weekly_seasonality=False, daily_seasonality=False)
-        model.fit(df_prophet)
+        model.fit(df_train)
         
-        # Forecast future periods
-        future = model.make_future_dataframe(periods=forecast_periods, freq="M")
+        # Create future dataframe that includes test period and 12 months beyond the last date
+        months_to_forecast = (last_date_in_data.year - cutoff_date.year) * 12 + \
+                            (last_date_in_data.month - cutoff_date.month) + forecast_periods
+        future = model.make_future_dataframe(periods=months_to_forecast, freq="M")
         forecast = model.predict(future)
     
     # Plot the forecast
-    st.subheader("📈 Forecast for the Next 12 Months")
+    st.subheader("📈 Forecast with Train/Test Split")
     
-    # Create a custom plot instead of using plot_plotly
+    # Create a custom plot
     fig = go.Figure()
     
     # Add the forecast line
@@ -357,39 +367,74 @@ with tab2:
         name='Uncertainty Interval'
     ))
     
-    # Add the actual data points as red points
+    # Add the training data points
     fig.add_trace(go.Scatter(
-        x=df_prophet['ds'],
-        y=df_prophet['y'],
+        x=df_train['ds'],
+        y=df_train['y'],
         mode='markers',
-        marker=dict(color='red', size=8),
-        name='Actual Data'
+        marker=dict(color='blue', size=8),
+        name='Training Data (2015-2016)'
     ))
     
-    # Add a vertical line to show where forecast begins
-    last_historical_date = df_prophet['ds'].max()
+    # Add the testing data points
+    fig.add_trace(go.Scatter(
+        x=df_test['ds'],
+        y=df_test['y'],
+        mode='markers',
+        marker=dict(color='orange', size=8),
+        name='Testing Data (2017+)'
+    ))
     
-    # Instead of add_vline, use add_shape for more control
+    # Add a vertical green line to show where training ends
+    training_end_date = cutoff_date
+    
     fig.add_shape(
         type="line",
-        x0=last_historical_date,
-        x1=last_historical_date,
+        x0=training_end_date,
+        x1=training_end_date,
+        y0=0,
+        y1=1,
+        yref="paper",
+        line=dict(color="green", width=2, dash="dash")
+    )
+    
+    # Add annotation for training end
+    fig.add_annotation(
+        x=training_end_date,
+        y=1,
+        yref="paper",
+        text="Training End (Dec 2016)",
+        showarrow=False,
+        xanchor="left",
+        yanchor="bottom",
+        xshift=10,
+        font=dict(color="green")
+    )
+    
+    # Add a vertical red line to show where testing ends
+    testing_end_date = last_date_in_data
+    
+    fig.add_shape(
+        type="line",
+        x0=testing_end_date,
+        x1=testing_end_date,
         y0=0,
         y1=1,
         yref="paper",
         line=dict(color="red", width=2, dash="dash")
     )
     
-    # Add annotation separately
+    # Add annotation for testing end
     fig.add_annotation(
-        x=last_historical_date,
-        y=1,
+        x=testing_end_date,
+        y=0.9,
         yref="paper",
-        text="Forecast Start",
+        text="Testing End",
         showarrow=False,
         xanchor="left",
         yanchor="bottom",
-        xshift=10
+        xshift=10,
+        font=dict(color="red")
     )
     
     # Update layout
@@ -402,17 +447,36 @@ with tab2:
     
     st.plotly_chart(fig, use_container_width=True)
     
+    # Calculate and display model performance metrics on test set
+    st.subheader("📊 Model Performance on Test Set (2017+)")
+
+    # Create a dataframe with just the test dates
+    future_test = pd.DataFrame({'ds': df_test['ds']})
+    # Make predictions for these dates
+    forecast_test = model.predict(future_test)
+
+    # Calculate metrics
+    mae = np.mean(np.abs(df_test['y'].values - forecast_test['yhat'].values))
+    mape = np.mean(np.abs((df_test['y'].values - forecast_test['yhat'].values) / 
+                          np.maximum(df_test['y'].values, 0.001))) * 100
+
+    # Display metrics
+    col1, col2 = st.columns(2)
+    col1.metric("Mean Absolute Error (MAE)", f"{mae:.2f}")
+    col2.metric("Mean Absolute Percentage Error (MAPE)", f"{mape:.2f}%")
+
     # Show forecast components
     st.subheader("🔍 Forecast Components")
     fig_comp = model.plot_components(forecast)
     st.pyplot(fig_comp)
-    
+
     # Show forecasted values in a table
-    st.subheader("📋 Forecast Data")
-    forecast_table = forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail(forecast_periods).copy()
-    forecast_table["ds"] = forecast_table["ds"].dt.strftime("%Y-%m")
-    forecast_table.columns = ["Month", "Predicted Bookings", "Lower Bound", "Upper Bound"]
-    forecast_table["Predicted Bookings"] = forecast_table["Predicted Bookings"].round().astype(int)
-    forecast_table["Lower Bound"] = forecast_table["Lower Bound"].round().astype(int)
-    forecast_table["Upper Bound"] = forecast_table["Upper Bound"].round().astype(int)
-    st.dataframe(forecast_table, use_container_width=True)
+    st.subheader("📋 Future Forecast Data (Next 12 Months)")
+    future_forecast = forecast[forecast['ds'] > testing_end_date].copy()
+    future_forecast = future_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].head(forecast_periods)
+    future_forecast["ds"] = future_forecast["ds"].dt.strftime("%Y-%m")
+    future_forecast.columns = ["Month", "Predicted Bookings", "Lower Bound", "Upper Bound"]
+    future_forecast["Predicted Bookings"] = future_forecast["Predicted Bookings"].round().astype(int)
+    future_forecast["Lower Bound"] = future_forecast["Lower Bound"].round().astype(int)
+    future_forecast["Upper Bound"] = future_forecast["Upper Bound"].round().astype(int)
+    st.dataframe(future_forecast, use_container_width=True)
