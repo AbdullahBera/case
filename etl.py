@@ -1,29 +1,27 @@
 import os
 import pandas as pd
-import psycopg2
 from dotenv import load_dotenv
-from psycopg2.extras import execute_values
+import httpx
+from datetime import datetime
 
-# Load PostgreSQL credentials from .env file
+# Load environment variables
 load_dotenv()
+print("Environment variables loaded")
 
-DB_NAME = os.getenv("DB_NAME")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# PostgreSQL Connection
-def get_connection():
-    return psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
+print(f"SUPABASE_URL exists: {'Yes' if SUPABASE_URL else 'No'}")
+print(f"SUPABASE_KEY exists: {'Yes' if SUPABASE_KEY else 'No'}")
 
-# Load CSV file
+# Set up headers for Supabase REST API
+headers = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
+
+# Load and clean data
 df = pd.read_csv("/Users/bera/Desktop/data/hotel_bookings.csv")
 
 # Clean Data
@@ -34,191 +32,221 @@ df["agent"] = df["agent"].fillna(0)
 df.drop("company", axis=1, inplace=True) 
 df["reservation_status_date"] = pd.to_datetime(df["reservation_status_date"]) 
 
-# Remove duplicate rows if any
+# Remove duplicate rows
 df.drop_duplicates(inplace=True)
 
-# Function to insert data into PostgreSQL with column mapping
-def insert_data(table_name, df, db_column_names=None, df_column_names=None, key_columns=None):
+def insert_data(table_name, records, unique_columns=None):
     """
-    Inserts or updates data in PostgreSQL with optional column mapping.
+    Insert data into Supabase table with upsert support
     
     Args:
-        table_name: Name of the target table
-        df: DataFrame containing the data
-        db_column_names: Column names in the database table
-        df_column_names: Column names in the DataFrame
-        key_columns: List of columns that form a unique key
+        table_name: Name of the table
+        records: List of records to insert
+        unique_columns: List of columns that form a unique constraint
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    if df_column_names is None:
-        df_column_names = db_column_names
-    
-    data_tuples = [tuple(x) for x in df[df_column_names].to_numpy()]
-    
-    # Create SQL Upsert Query
-    query = f"INSERT INTO {table_name} ({', '.join(db_column_names)}) VALUES %s"
-    
-    if key_columns:
-        # Add ON CONFLICT clause for upsert
-        conflict_cols = ', '.join(key_columns)
-        update_cols = ', '.join([f"{col} = EXCLUDED.{col}" for col in db_column_names if col not in key_columns])
-        query += f" ON CONFLICT ({conflict_cols}) DO UPDATE SET {update_cols}"
-    
     try:
-        execute_values(cursor, query, data_tuples)
-        conn.commit()
-        print(f"✅ Data inserted/updated in {table_name} successfully!")
+        # Add Prefer header for upsert if unique_columns are specified
+        request_headers = headers.copy()
+        if unique_columns:
+            request_headers["Prefer"] = "resolution=merge-duplicates"
+            
+        with httpx.Client() as client:
+            response = client.post(
+                f"{SUPABASE_URL}/rest/v1/{table_name}",
+                headers=request_headers,
+                params={"on_conflict": ",".join(unique_columns)} if unique_columns else None,
+                json=records
+            )
+            if response.status_code in [200, 201]:
+                print(f"✅ Data inserted/updated in {table_name} successfully!")
+                return True
+            else:
+                print(f"❌ Error with {table_name}: {response.text}")
+                return False
     except Exception as e:
         print(f"❌ Error with {table_name}: {e}")
-        conn.rollback()
-    finally:
-        cursor.close()
-        conn.close()
+        return False
 
-# Insert Data into Dimension Tables
-insert_data("dim_hotels", df[["hotel", "market_segment", "distribution_channel"]].drop_duplicates(), 
-            db_column_names=["hotel_name", "market_segment", "distribution_channel"],
-            df_column_names=["hotel", "market_segment", "distribution_channel"])
+def get_mapping(table_name, key_field, value_field):
+    """Get mapping with debug information"""
+    with httpx.Client() as client:
+        response = client.get(
+            f"{SUPABASE_URL}/rest/v1/{table_name}?select={key_field},{value_field}",
+            headers=headers
+        )
+        if response.status_code == 200:
+            data = response.json()
+            print(f"Retrieved {len(data)} mappings for {table_name}")
+            if len(data) > 0:
+                print(f"Sample mapping for {table_name}:", data[0])
+            return {str(row[value_field]): row[key_field] for row in data}
+        else:
+            print(f"Error getting mappings for {table_name}: {response.text}")
+        return {}
 
-date_df = df[["reservation_status_date", "arrival_date_year", "arrival_date_month", 
-              "arrival_date_week_number", "arrival_date_day_of_month"]].drop_duplicates()
-insert_data("dim_dates", date_df,
-            db_column_names=["arrival_date", "arrival_year", "arrival_month", 
-                             "arrival_week_number", "arrival_day_of_month"],
-            df_column_names=["reservation_status_date", "arrival_date_year", "arrival_date_month", 
-                             "arrival_date_week_number", "arrival_date_day_of_month"])
+def get_customer_mapping(table_name):
+    """Get customer mapping with composite key"""
+    with httpx.Client() as client:
+        response = client.get(
+            f"{SUPABASE_URL}/rest/v1/{table_name}?select=customer_id,adults,children,babies,customer_type,country",
+            headers=headers
+        )
+        if response.status_code == 200:
+            data = response.json()
+            print(f"Retrieved {len(data)} customer mappings")
+            # Create composite key mapping
+            mapping = {}
+            for row in data:
+                key = (
+                    int(row['adults']), 
+                    int(row['children']), 
+                    int(row['babies']), 
+                    row['customer_type'], 
+                    row['country']
+                )
+                mapping[key] = row['customer_id']
+            return mapping
+        return {}
 
-insert_data("dim_customers", df[["adults", "children", "babies", "customer_type", "country"]].drop_duplicates(),
-            db_column_names=["adults", "children", "babies", "customer_type", "country"])
+# Insert dimension tables
+print("\nInserting dimension tables...")
 
-agent_df = df[["agent"]].drop_duplicates()
-agent_df["agent"] = agent_df["agent"].astype(float).astype(str)  # Convert to string
-insert_data("dim_agents", agent_df,
-            db_column_names=["agent_name"],
-            df_column_names=["agent"])
+# Hotels dimension
+hotels_df = df[["hotel", "market_segment", "distribution_channel"]].drop_duplicates()
+hotels_records = [
+    {"hotel_name": row["hotel"], 
+     "market_segment": row["market_segment"],
+     "distribution_channel": row["distribution_channel"]}
+    for _, row in hotels_df.iterrows()
+]
+print(f"\nInserting {len(hotels_records)} hotel records")
+insert_data("dim_hotels", hotels_records, unique_columns=["hotel_name", "market_segment", "distribution_channel"])
 
-def create_mapping_table(table_name, key_column, value_column):
-    """Create a dictionary mapping dimension values to their IDs"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT {key_column}, {value_column} FROM {table_name}")
-    mapping = {row[1]: row[0] for row in cursor.fetchall()}
-    cursor.close()
-    conn.close()
-    return mapping
+# 2. Dates dimension
+dates_df = df[["reservation_status_date", "arrival_date_year", "arrival_date_month", 
+               "arrival_date_week_number", "arrival_date_day_of_month"]].drop_duplicates(
+                   subset=["reservation_status_date"]  # Ensure uniqueness by date
+               )
 
-# Create mapping dictionaries for each dimension
-hotel_mapping = create_mapping_table("dim_hotels", "hotel_id", "hotel_name")
+dates_records = [
+    {"arrival_date": row["reservation_status_date"].strftime('%Y-%m-%d'),
+     "arrival_year": int(row["arrival_date_year"]),  # Ensure integer
+     "arrival_month": str(row["arrival_date_month"]),  # Ensure string
+     "arrival_week_number": int(row["arrival_date_week_number"]),  # Ensure integer
+     "arrival_day_of_month": int(row["arrival_date_day_of_month"])}  # Ensure integer
+    for _, row in dates_df.iterrows()
+]
 
-# Fix the date mapping - convert between datetime.date and pandas.Timestamp
-conn = get_connection()
-cursor = conn.cursor()
-cursor.execute("SELECT date_id, arrival_date FROM dim_dates")
-date_mapping = {}
-for row in cursor.fetchall():
-    date_id, db_date = row
-    # Convert database date to string in YYYY-MM-DD format for comparison
-    date_str = db_date.strftime('%Y-%m-%d')
-    date_mapping[date_str] = date_id
-cursor.close()
-conn.close()
+# Insert with upsert
+insert_data("dim_dates", dates_records, unique_columns=["arrival_date"])
 
-# Print some sample dates from the mapping to debug
-print("Sample dates from mapping:")
-sample_dates = list(date_mapping.keys())[:5]
-for date in sample_dates:
-    print(f"Date: {date}, Type: {type(date)}")
+# 3. Customers dimension
+customers_df = df[["adults", "children", "babies", "customer_type", "country"]].drop_duplicates()
+customers_records = [
+    {
+        "adults": int(row["adults"]),  # Convert to integer
+        "children": int(row["children"]),  # Convert to integer
+        "babies": int(row["babies"]),  # Convert to integer
+        "customer_type": row["customer_type"],
+        "country": row["country"]
+    }
+    for _, row in customers_df.iterrows()
+]
+insert_data("dim_customers", customers_records, unique_columns=["adults", "children", "babies", "customer_type", "country"])
 
-# Print some sample dates from the dataframe to debug
-print("\nSample dates from dataframe:")
-sample_df_dates = df["reservation_status_date"].head(5)
-for date in sample_df_dates:
-    print(f"Date: {date}, Type: {type(date)}")
+# 4. Agents dimension
+agents_df = df[["agent"]].drop_duplicates()
+agents_records = [
+    {"agent_name": str(int(row["agent"])) if pd.notnull(row["agent"]) else "Unknown"}
+    for _, row in agents_df.iterrows()
+]
+insert_data("dim_agents", agents_records, unique_columns=["agent_name"])
 
-customer_mapping = {}  # This is more complex - we'll handle it differently
-agent_mapping = create_mapping_table("dim_agents", "agent_id", "agent_name")
+# Get mappings with debug information
+print("\nRetrieving mappings...")
+hotel_mapping = get_mapping("dim_hotels", "hotel_id", "hotel_name")
+date_mapping = get_mapping("dim_dates", "date_id", "arrival_date")
+customer_mapping = get_customer_mapping("dim_customers")  # Use new function
+agent_mapping = get_mapping("dim_agents", "agent_id", "agent_name")
 
-# For customers, we need to create a composite key
-conn = get_connection()
-cursor = conn.cursor()
-cursor.execute("SELECT customer_id, adults, children, babies, customer_type, country FROM dim_customers")
-for row in cursor.fetchall():
-    # Create a composite key from the customer attributes
-    customer_key = (row[1], row[2], row[3], row[4], row[5])  # (adults, children, babies, customer_type, country)
-    customer_mapping[customer_key] = row[0]  # customer_id
-cursor.close()
-conn.close()
+print("\nMapping sizes:")
+print(f"Hotels: {len(hotel_mapping)}")
+print(f"Dates: {len(date_mapping)}")
+print(f"Customers: {len(customer_mapping)}")
+print(f"Agents: {len(agent_mapping)}")
 
-# Now prepare data for fact_bookings
-fact_data = []
-for _, row in df.iterrows():
-    # Get dimension IDs
+# Prepare fact records with debugging
+print("\nPreparing fact records...")
+fact_records = []
+missing_mappings = {
+    'hotel': set(),
+    'date': set(),
+    'customer': set(),
+    'agent': set()
+}
+
+for idx, row in df.iterrows():
     hotel_id = hotel_mapping.get(row["hotel"])
-    
-    # For date, convert Timestamp to string in YYYY-MM-DD format
     date_str = row["reservation_status_date"].strftime('%Y-%m-%d')
     date_id = date_mapping.get(date_str)
     
-    # For customer, create the composite key
-    customer_key = (row["adults"], row["children"], row["babies"], row["customer_type"], row["country"])
+    # Create customer key matching the mapping
+    customer_key = (
+        int(row["adults"]),
+        int(row["children"]),
+        int(row["babies"]),
+        row["customer_type"],
+        row["country"]
+    )
     customer_id = customer_mapping.get(customer_key)
     
-    # For agent
-    agent_id = agent_mapping.get(str(float(row["agent"])))
+    agent_id = agent_mapping.get(str(float(row["agent"])) if pd.notnull(row["agent"]) else "Unknown")
     
-    # Only add rows where we have all required foreign keys
+    if not hotel_id:
+        missing_mappings['hotel'].add(row["hotel"])
+    if not date_id:
+        missing_mappings['date'].add(date_str)
+    if not customer_id:
+        missing_mappings['customer'].add(customer_key)
+    if not agent_id:
+        missing_mappings['agent'].add(str(float(row["agent"])) if pd.notnull(row["agent"]) else "Unknown")
+    
     if hotel_id and date_id and customer_id:
-        fact_data.append({
+        fact_records.append({
             "hotel_id": hotel_id,
             "date_id": date_id,
             "customer_id": customer_id,
             "agent_id": agent_id,
-            "is_canceled": row["is_canceled"],
-            "lead_time": row["lead_time"],
-            "stays_in_weekend_nights": row["stays_in_weekend_nights"],
-            "stays_in_week_nights": row["stays_in_week_nights"],
-            "adr": row["adr"],
-            "booking_changes": row["booking_changes"],
+            "is_canceled": bool(row["is_canceled"]),
+            "lead_time": int(row["lead_time"]),
+            "stays_in_weekend_nights": int(row["stays_in_weekend_nights"]),
+            "stays_in_week_nights": int(row["stays_in_week_nights"]),
+            "adr": float(row["adr"]),
+            "booking_changes": int(row["booking_changes"]),
             "deposit_type": row["deposit_type"],
-            "days_in_waiting_list": row["days_in_waiting_list"],
-            "required_car_parking_spaces": row["required_car_parking_spaces"],
-            "total_of_special_requests": row["total_of_special_requests"],
+            "days_in_waiting_list": int(row["days_in_waiting_list"]),
+            "required_car_parking_spaces": int(row["required_car_parking_spaces"]),
+            "total_of_special_requests": int(row["total_of_special_requests"]),
             "reservation_status": row["reservation_status"],
-            "reservation_status_date": row["reservation_status_date"]
+            "reservation_status_date": row["reservation_status_date"].strftime('%Y-%m-%d')
         })
 
-# Add debugging information
-print(f"Number of rows in original dataframe: {len(df)}")
-print(f"Number of rows prepared for fact table: {len(fact_data)}")
+    if idx % 1000 == 0:
+        print(f"Processed {idx} rows...")
 
-# Check if fact_data is empty
-if not fact_data:
-    print("⚠️ No data prepared for fact_bookings! Checking dimension mappings...")
-    print(f"Hotel mapping entries: {len(hotel_mapping)}")
-    print(f"Date mapping entries: {len(date_mapping)}")
-    print(f"Customer mapping entries: {len(customer_mapping)}")
-    print(f"Agent mapping entries: {len(agent_mapping)}")
-    
-    # Sample a few rows to debug
-    sample_rows = df.head(5)
-    for i, row in sample_rows.iterrows():
-        print(f"\nSample row {i}:")
-        hotel = row["hotel"]
-        res_date = row["reservation_status_date"]
-        customer_key = (row["adults"], row["children"], row["babies"], row["customer_type"], row["country"])
-        agent = str(float(row["agent"]))
-        
-        print(f"Hotel: {hotel} -> ID: {hotel_mapping.get(hotel)}")
-        print(f"Date: {res_date} -> ID: {date_mapping.get(res_date.strftime('%Y-%m-%d'))}")
-        print(f"Customer key: {customer_key} -> ID: {customer_mapping.get(customer_key)}")
-        print(f"Agent: {agent} -> ID: {agent_mapping.get(agent)}")
+print("\nMissing mappings summary:")
+for key, values in missing_mappings.items():
+    print(f"{key}: {len(values)} missing mappings")
+    if len(values) > 0:
+        print(f"Sample missing {key}:", list(values)[:3])
 
-# Convert to DataFrame and insert
-if fact_data:
-    fact_df = pd.DataFrame(fact_data)
-    insert_data("fact_bookings", fact_df, fact_df.columns.tolist())
-    print("🎉 Data pipeline completed successfully!")
-else:
-    print("❌ No data to insert into fact_bookings table!")
+print(f"\nPrepared {len(fact_records)} fact records")
+
+# Insert fact table in batches
+BATCH_SIZE = 1000
+for i in range(0, len(fact_records), BATCH_SIZE):
+    batch = fact_records[i:i + BATCH_SIZE]
+    print(f"Inserting batch {i//BATCH_SIZE + 1} of {len(fact_records)//BATCH_SIZE + 1}")
+    insert_data("fact_bookings", batch)
+
+print("\n🎉 Data pipeline completed!")
